@@ -1,0 +1,225 @@
+- service: arista.studio.v1.StudioConfigService
+  method: Set
+  body:
+    value:
+      key:
+        studio_id: c275d982-7104-4227-894a-95a9692843a1
+        workspace_id: ''
+      display_name: Interface_Manager
+      description: ''
+      template:
+        type: TEMPLATE_TYPE_MAKO
+        body: |
+          <%
+          my_device = ctx.getDevice()
+          %>
+
+
+          <%def name="render_switchport_config(cfg)">
+            % if cfg["accessOrTrunk"] == True:
+            switchport mode trunk
+            switchport trunk allowed vlan ${cfg["vlan"]}
+            % else:
+            switchport mode access
+            switchport access vlan ${cfg["vlan"]}
+            % endif
+          </%def>
+
+
+          <%def name="render_port_channel_block(cfg)">
+          channel-group  ${cfg["portChannelNumber"]} mode active
+          interface port-channel ${cfg["portChannelNumber"]} 
+          ${render_switchport_config(cfg)}
+          </%def>
+
+
+          <%def name="makeInterfaceCfg(intfName, intfCfg)">
+          interface ${intfName}
+            % if intfCfg["enabled"]:
+            no shutdown
+            % else:
+            shutdown
+            % endif
+
+            % if intfCfg["description"]:
+            description ${intfCfg["description"]}
+            % endif
+
+            % if intfCfg["portChannelNumber"] and intfCfg["enableEsi"] == True:
+              ${render_port_channel_block(intfCfg)}
+              evpn ethernet-segment
+              identifier ${intfCfg["esiNumber"]}
+              route-target import 50:0c:00:08:00:07
+              lacp system-id 500c.0008.0007
+
+            % elif intfCfg["portChannelNumber"] and intfCfg["enableEsi"] == False:
+              ${render_port_channel_block(intfCfg)}
+
+            % elif intfCfg["portChannelNumber"] == False and intfCfg["enableEsi"] == False:
+              ${render_switchport_config(intfCfg)}
+              
+            % endif
+
+
+          </%def>
+
+
+
+
+          % for intf in sorted(my_device.getInterfaces(), key=lambda i: i.name):
+            <% 
+              intfName = intf.name
+              intfVal = devices.resolve().interfaces.resolve(intfName, strict=False)
+              if not intfVal or not intfVal.get('intfConfig'):
+                  continue
+              intfCfg = intfVal['intfConfig']
+            %>
+            ${makeInterfaceCfg(intfName, intfCfg)}
+          % endfor
+      input_schema:
+        fields:
+          values:
+            fa730ff5-618e-41bc-9226-2e00e65ea305:
+              id: fa730ff5-618e-41bc-9226-2e00e65ea305
+              name: enabled
+              label: Enabled
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_BOOLEAN
+              boolean_props:
+                default_value: false
+            46d446af-cf1a-40a4-bb3c-2cf3ca655e2e:
+              id: 46d446af-cf1a-40a4-bb3c-2cf3ca655e2e
+              name: description
+              label: Description
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_STRING
+              string_props:
+                default_value: null
+                is_secret: false
+                static_options: null
+                format: null
+                length: null
+                pattern: null
+                dynamic_options: null
+                extra_values_allowed: false
+            4e817672-83d5-4ad0-9162-cade932dba79:
+              id: 4e817672-83d5-4ad0-9162-cade932dba79
+              name: enableEsi
+              label: Enable ESI
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_BOOLEAN
+              boolean_props:
+                default_value: false
+            d2da2b96-6ef6-4afe-a995-54a0047bbaab:
+              id: d2da2b96-6ef6-4afe-a995-54a0047bbaab
+              name: portChannelNumber
+              label: PortChannel Number
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: null
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            c94ab276-9817-4637-846c-b817954479f9:
+              id: c94ab276-9817-4637-846c-b817954479f9
+              name: esiNumber
+              label: Esi Number
+              description: Format must be HHHH:HHHH:HHHH:HHHH:HHHH
+              required: false
+              type: INPUT_FIELD_TYPE_STRING
+              string_props:
+                default_value: null
+                is_secret: false
+                static_options: null
+                format: null
+                length: null
+                pattern: null
+                dynamic_options: null
+                extra_values_allowed: false
+            27910127-e1cf-447c-bae9-349b668ed8a9:
+              id: 27910127-e1cf-447c-bae9-349b668ed8a9
+              name: accessOrTrunk
+              label: Access or Trunk
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_BOOLEAN
+              boolean_props:
+                default_value: false
+            ea3a0608-1cd9-4fd2-897e-342e91e56433:
+              id: ea3a0608-1cd9-4fd2-897e-342e91e56433
+              name: vlan
+              label: Vlan
+              description: Use "-" for vlan range;use "," for non-range  on trunk. Enter single vlan for access.
+              required: false
+              type: INPUT_FIELD_TYPE_STRING
+              string_props:
+                default_value: null
+                is_secret: false
+                static_options: null
+                format: null
+                length: null
+                pattern: null
+                dynamic_options: null
+                extra_values_allowed: false
+            d6466bca-fc74-410f-b771-f4849baed53a:
+              id: d6466bca-fc74-410f-b771-f4849baed53a
+              name: intfConfig
+              label: Interface Details
+              description: Group of members for Devices
+              required: false
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - fa730ff5-618e-41bc-9226-2e00e65ea305
+                    - 46d446af-cf1a-40a4-bb3c-2cf3ca655e2e
+                    - 4e817672-83d5-4ad0-9162-cade932dba79
+                    - d2da2b96-6ef6-4afe-a995-54a0047bbaab
+                    - c94ab276-9817-4637-846c-b817954479f9
+                    - 27910127-e1cf-447c-bae9-349b668ed8a9
+                    - ea3a0608-1cd9-4fd2-897e-342e91e56433
+            d3ec7bc8-4a40-4ec3-93ff-64350679ab9a:
+              id: d3ec7bc8-4a40-4ec3-93ff-64350679ab9a
+              name: interfaces
+              label: Interfaces
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_RESOLVER
+              resolver_props:
+                base_field_id: d6466bca-fc74-410f-b771-f4849baed53a
+                display_mode: RESOLVER_FIELD_DISPLAY_MODE_ALL
+                input_mode: RESOLVER_FIELD_INPUT_MODE_SINGLE_INTERFACE_TAG
+                input_tag_label: null
+                tag_filter_query: null
+            5d41d104-a177-45e4-a53b-56287e9cdac0:
+              id: 5d41d104-a177-45e4-a53b-56287e9cdac0
+              name: devices
+              label: Devices
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_RESOLVER
+              resolver_props:
+                base_field_id: d3ec7bc8-4a40-4ec3-93ff-64350679ab9a
+                display_mode: RESOLVER_FIELD_DISPLAY_MODE_ALL
+                input_mode: RESOLVER_FIELD_INPUT_MODE_SINGLE_DEVICE_TAG
+                input_tag_label: device
+                tag_filter_query: null
+            root:
+              id: root
+              name: ''
+              label: ''
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - 5d41d104-a177-45e4-a53b-56287e9cdac0
+        layout:
+          value: '{"5d41d104-a177-45e4-a53b-56287e9cdac0":{"key":"5d41d104-a177-45e4-a53b-56287e9cdac0","type":"INPUT","order":["d3ec7bc8-4a40-4ec3-93ff-64350679ab9a"]},"27910127-e1cf-447c-bae9-349b668ed8a9":{"key":"27910127-e1cf-447c-bae9-349b668ed8a9","type":"INPUT","valueToLabelMap":{"True":"Trunk","False":"Access"}}}'
