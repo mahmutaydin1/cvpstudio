@@ -1,0 +1,466 @@
+- service: arista.studio.v1.StudioConfigService
+  method: Set
+  body:
+    value:
+      key:
+        studio_id: 435161e0-773f-4361-bbe7-c71ca24f190f
+        workspace_id: bfa170ce-f167-42b9-9861-6f2ccadeeab8
+      display_name: ESI_Services
+      description: ''
+      template:
+        type: TEMPLATE_TYPE_MAKO
+        body: |+
+
+          <%
+          device = ctx.getDevice()
+          asn_tag = device.getTags(ctx, "router_bgp.as")
+          asn_value = [tag.value for tag in asn_tag]
+          my_asn = asn_value[0] if asn_value else None
+
+          routerid_tag = device.getTags(ctx, "router_bgp.router_id")
+          routerid_value = [tag.value for tag in routerid_tag]
+          my_routerid = routerid_value[0] if routerid_value else None
+
+
+
+
+          %>
+
+          % if vlans:
+            % for vlan in vlans:
+                <%  
+                switches_vlan_assigned=[]
+                vlan_details = vlan['switches'].resolveAll(strict=True)
+                for vlan_dev, vlan_detail in vlan_details:
+                  switches_vlan_assigned.append(vlan_dev)
+                %>
+
+              %if device.id in switches_vlan_assigned:
+
+                %if vlan['status']== True:
+                    vlan ${vlan['vlanNumber']}
+                    name ${vlan['vlanName']}
+                %else:
+                    no vlan ${vlan['vlanNumber']}
+
+                %endif
+              % endif
+              
+            % endfor
+            
+          % endif
+
+
+          % if vxlan:
+            % for vx in vxlan:
+                <%    
+                switches_vxlan_assigned=[]
+                vxlan_details = vx['vteps'].resolveAll(strict=True)
+                for vxlan_dev, vxlan_detail in vxlan_details:
+                  switches_vxlan_assigned.append(vxlan_dev)
+                %>
+
+              %if device.id in switches_vxlan_assigned:
+
+                %if vx['vxlanStatus']== True:
+                    interface vxlan 1
+                    vxlan vlan add ${vx["vlanId"]} vni ${vx["vlanId"] + vx["vniBase"]}
+                
+                  %if vx['virtualIp']:
+
+                    % if vx['vrfForVlan'] != "default":
+                      vrf instance ${vx['vrfForVlan']}
+                      ip routing vrf ${vx['vrfForVlan']}
+
+                      router bgp ${my_asn}
+                      vrf ${vx['vrfForVlan']}
+                      rd ${my_routerid}:${vx['vrfId']}
+                      route-target export evpn ${vx['vrfId']}:${vx['vrfId']}
+                      route-target import evpn ${vx['vrfId']}:${vx['vrfId']}
+                      redistribute connected
+                    %endif
+                    interface vlan ${vx["vlanId"]}
+                    vrf ${vx['vrfForVlan']}
+                    ip address virtual ${vx['virtualIp']}
+
+                    
+                  %endif
+
+                  %if vx["vlanAdvertisement"]==True:
+
+                  router bgp ${my_asn}
+                  vlan ${vx["vlanId"]}
+                  rd ${my_routerid}:${vx["vlanId"]}
+                  route-target export ${vx["vlanId"]}:${vx["vlanId"]}
+                  route-target import ${vx["vlanId"]}:${vx["vlanId"]}
+                  redistribute learned
+
+                  %else:
+
+                  router bgp ${my_asn}
+                  vlan-aware-bundle ${vx["vlanAwareBundleName"]}
+                  rd ${my_routerid}:1
+                  vlan add ${vx["vlanId"]}
+                  route-target export 1:1
+                  route-target import 1:1
+                  redistribute learned
+
+
+                  %endif
+
+                  %if vx['vniForVrfExtension']:
+                    interface vxlan 1
+                    vxlan vrf ${vx['vrfForVlan']} vni ${vx['vniForVrfExtension']}
+                  
+                  %endif
+
+                 
+                %else:
+                    vxlan vlan remove ${vx["vlanId"]} vni ${vx["vlanId"] + vx["vniBase"]}
+                    %if vx["vlanAdvertisement"]==True:
+                    router bgp ${my_asn}
+                    no vlan ${vx["vlanId"]}
+                    %else:
+                    router bgp ${my_asn}
+                    vlan-aware-bundle ${vx["vlanAwareBundleName"]}
+                    vlan remove ${vx["vlanId"]}
+                    %endif
+
+                %endif
+              % endif
+              
+            % endfor
+            
+          % endif
+
+
+      input_schema:
+        fields:
+          values:
+            844a75a1-f2be-4d91-aaae-d1e9fb7dc90c:
+              id: 844a75a1-f2be-4d91-aaae-d1e9fb7dc90c
+              name: vlanNumber
+              label: vlanNumber
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: null
+                range: 1..4094
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            9a84b142-5f02-42e2-86f0-c92fd2d8e000:
+              id: 9a84b142-5f02-42e2-86f0-c92fd2d8e000
+              name: vlanName
+              label: vlanName
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_STRING
+              string_props:
+                default_value: null
+                is_secret: false
+                static_options: null
+                format: null
+                length: null
+                pattern: null
+                dynamic_options: null
+                extra_values_allowed: false
+            60bfa711-9bfb-4345-a734-46c69929b8c7:
+              id: 60bfa711-9bfb-4345-a734-46c69929b8c7
+              name: status
+              label: status
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_BOOLEAN
+              boolean_props:
+                default_value: true
+            e5ec88e5-b4b6-4a77-94db-e0c66c314d79:
+              id: e5ec88e5-b4b6-4a77-94db-e0c66c314d79
+              name: apply
+              label: Apply
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_BOOLEAN
+              boolean_props:
+                default_value: false
+            ffa079d0-6e67-4a99-8457-c7eb38b393c9:
+              id: ffa079d0-6e67-4a99-8457-c7eb38b393c9
+              name: hostname
+              label: Hostname
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_RESOLVER
+              resolver_props:
+                base_field_id: e5ec88e5-b4b6-4a77-94db-e0c66c314d79
+                display_mode: RESOLVER_FIELD_DISPLAY_MODE_SPARSE
+                input_mode: RESOLVER_FIELD_INPUT_MODE_MULTI_DEVICE_TAG
+                input_tag_label: null
+                tag_filter_query: null
+            e8677704-fce4-462b-b525-b1b84496615c:
+              id: e8677704-fce4-462b-b525-b1b84496615c
+              name: devices
+              label: Devices
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - ffa079d0-6e67-4a99-8457-c7eb38b393c9
+            2eedb0ea-053e-41af-a8b5-c0f0aaf7e276:
+              id: 2eedb0ea-053e-41af-a8b5-c0f0aaf7e276
+              name: switches
+              label: Vteps
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_RESOLVER
+              resolver_props:
+                base_field_id: e8677704-fce4-462b-b525-b1b84496615c
+                display_mode: RESOLVER_FIELD_DISPLAY_MODE_SPARSE
+                input_mode: RESOLVER_FIELD_INPUT_MODE_MULTI_DEVICE_TAG
+                input_tag_label: null
+                tag_filter_query: null
+            377ad8b6-557e-409b-a4f0-147a42d26313:
+              id: 377ad8b6-557e-409b-a4f0-147a42d26313
+              name: vlansGroup
+              label: Vlans Group
+              description: Group of members for vlans
+              required: true
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - 844a75a1-f2be-4d91-aaae-d1e9fb7dc90c
+                    - 9a84b142-5f02-42e2-86f0-c92fd2d8e000
+                    - 60bfa711-9bfb-4345-a734-46c69929b8c7
+                    - 2eedb0ea-053e-41af-a8b5-c0f0aaf7e276
+            06b0424d-20b4-4f5a-aeb7-ddac7f4b8a63:
+              id: 06b0424d-20b4-4f5a-aeb7-ddac7f4b8a63
+              name: vlans
+              label: VLANS
+              description: Be careful about choosing devices in Device Selection.Leaf must be selected
+              required: false
+              type: INPUT_FIELD_TYPE_COLLECTION
+              collection_props:
+                base_field_id: 377ad8b6-557e-409b-a4f0-147a42d26313
+                key: 844a75a1-f2be-4d91-aaae-d1e9fb7dc90c
+            da3e099f-ed37-4418-8b4f-b045697f4ead:
+              id: da3e099f-ed37-4418-8b4f-b045697f4ead
+              name: vlanId
+              label: vlanID
+              description: ''
+              required: true
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: null
+                range: 1..4094
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            3c1dc55d-16b3-4753-8ce9-bb261e02bced:
+              id: 3c1dc55d-16b3-4753-8ce9-bb261e02bced
+              name: vxlanStatus
+              label: vxlanStatus
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_BOOLEAN
+              boolean_props:
+                default_value: true
+            a6609193-b908-43be-b46d-97666cbe41b1:
+              id: a6609193-b908-43be-b46d-97666cbe41b1
+              name: vniBase
+              label: vniBase
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: '10000'
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            5fb18b58-4a65-4a19-a6a0-ede45d61abd6:
+              id: 5fb18b58-4a65-4a19-a6a0-ede45d61abd6
+              name: virtualIp
+              label: virtualIP
+              description: Assign if you need SVI for VLAN
+              required: false
+              type: INPUT_FIELD_TYPE_STRING
+              string_props:
+                default_value: null
+                is_secret: false
+                static_options: null
+                format: cidrv4
+                length: null
+                pattern: null
+                dynamic_options: null
+                extra_values_allowed: false
+            376fb878-9d4b-4d17-b3c0-1c6d5c5d04a9:
+              id: 376fb878-9d4b-4d17-b3c0-1c6d5c5d04a9
+              name: vrfForVlan
+              label: Vrf for vlan
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_STRING
+              string_props:
+                default_value: default
+                is_secret: false
+                static_options: null
+                format: null
+                length: null
+                pattern: null
+                dynamic_options: null
+                extra_values_allowed: false
+            f72cfbe5-0271-4e92-9068-d31dbc6c8a3d:
+              id: f72cfbe5-0271-4e92-9068-d31dbc6c8a3d
+              name: apply
+              label: Apply
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_BOOLEAN
+              boolean_props:
+                default_value: false
+            6013c2b5-7e12-4896-85e2-d106c6e283c6:
+              id: 6013c2b5-7e12-4896-85e2-d106c6e283c6
+              name: value
+              label: Hostname Group
+              description: Group of members for Hostname
+              required: false
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - f72cfbe5-0271-4e92-9068-d31dbc6c8a3d
+            098db988-6224-4a90-afa0-8759661fefd7:
+              id: 098db988-6224-4a90-afa0-8759661fefd7
+              name: hostname
+              label: Hostname
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_RESOLVER
+              resolver_props:
+                base_field_id: 6013c2b5-7e12-4896-85e2-d106c6e283c6
+                display_mode: RESOLVER_FIELD_DISPLAY_MODE_SPARSE
+                input_mode: RESOLVER_FIELD_INPUT_MODE_MULTI_DEVICE_TAG
+                input_tag_label: null
+                tag_filter_query: null
+            e953c4dd-43c5-429c-b959-36f5a98905fb:
+              id: e953c4dd-43c5-429c-b959-36f5a98905fb
+              name: vtepDevices
+              label: VtepDevices
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - 098db988-6224-4a90-afa0-8759661fefd7
+            71f7a182-2458-4225-829a-fc9f8ca46b1d:
+              id: 71f7a182-2458-4225-829a-fc9f8ca46b1d
+              name: vteps
+              label: VTEPS
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_RESOLVER
+              resolver_props:
+                base_field_id: e953c4dd-43c5-429c-b959-36f5a98905fb
+                display_mode: RESOLVER_FIELD_DISPLAY_MODE_SPARSE
+                input_mode: RESOLVER_FIELD_INPUT_MODE_MULTI_DEVICE_TAG
+                input_tag_label: null
+                tag_filter_query: null
+            1b8d1192-8f7b-4237-80d7-f9fe483ec8af:
+              id: 1b8d1192-8f7b-4237-80d7-f9fe483ec8af
+              name: vlanAdvertisement
+              label: VLAN Advertisement
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_BOOLEAN
+              boolean_props:
+                default_value: true
+            dd9a6277-bb2d-45bf-9e76-2e82314f5592:
+              id: dd9a6277-bb2d-45bf-9e76-2e82314f5592
+              name: vlanAwareBundleName
+              label: Vlan-Aware-Bundle-Name
+              description: if you will use vlan-aware-bundle, add a name here.
+              required: false
+              type: INPUT_FIELD_TYPE_STRING
+              string_props:
+                default_value: null
+                is_secret: false
+                static_options: null
+                format: null
+                length: null
+                pattern: null
+                dynamic_options: null
+                extra_values_allowed: false
+            d2dbcb0b-d493-4135-8de7-bea21fe6d29f:
+              id: d2dbcb0b-d493-4135-8de7-bea21fe6d29f
+              name: vniForVrfExtension
+              label: VNI for VRF Extension
+              description: add vni for vrf extension RT-5,if vlan is under different vrf than default
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: null
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            4386b4ae-956c-4ac6-9b97-986bcac2516e:
+              id: 4386b4ae-956c-4ac6-9b97-986bcac2516e
+              name: vrfId
+              label: VRF ID
+              description: this is will be used for only advertisement RD.If VRF is not default.
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: null
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            1b13d80e-9762-4aaf-93ab-4ec6c9c15a0f:
+              id: 1b13d80e-9762-4aaf-93ab-4ec6c9c15a0f
+              name: vxlanGroup
+              label: VXLAN Group
+              description: Group of members for VXLAN
+              required: false
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - da3e099f-ed37-4418-8b4f-b045697f4ead
+                    - 3c1dc55d-16b3-4753-8ce9-bb261e02bced
+                    - a6609193-b908-43be-b46d-97666cbe41b1
+                    - 5fb18b58-4a65-4a19-a6a0-ede45d61abd6
+                    - 376fb878-9d4b-4d17-b3c0-1c6d5c5d04a9
+                    - 71f7a182-2458-4225-829a-fc9f8ca46b1d
+                    - 1b8d1192-8f7b-4237-80d7-f9fe483ec8af
+                    - dd9a6277-bb2d-45bf-9e76-2e82314f5592
+                    - d2dbcb0b-d493-4135-8de7-bea21fe6d29f
+                    - 4386b4ae-956c-4ac6-9b97-986bcac2516e
+            3f4515db-f86e-43cf-893d-7a1747a579cc:
+              id: 3f4515db-f86e-43cf-893d-7a1747a579cc
+              name: vxlan
+              label: vxlan
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_COLLECTION
+              collection_props:
+                base_field_id: 1b13d80e-9762-4aaf-93ab-4ec6c9c15a0f
+                key: da3e099f-ed37-4418-8b4f-b045697f4ead
+            root:
+              id: root
+              name: ''
+              label: ''
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - 06b0424d-20b4-4f5a-aeb7-ddac7f4b8a63
+                    - 3f4515db-f86e-43cf-893d-7a1747a579cc
+        layout:
+          value: '{"2eb60e7f-0f84-4532-b011-604b2ab1dd4a":{"key":"2eb60e7f-0f84-4532-b011-604b2ab1dd4a","type":"INPUT"},"efd1c67f-42b2-48cf-9145-df3171bb4a58":{"key":"efd1c67f-42b2-48cf-9145-df3171bb4a58","type":"INPUT","dependency":{},"dependencyType":"OR"},"06b0424d-20b4-4f5a-aeb7-ddac7f4b8a63":{"key":"06b0424d-20b4-4f5a-aeb7-ddac7f4b8a63","dependency":{},"type":"INPUT","isPageLayout":true},"670d36f2-ef90-4ea5-bac5-0ede91265195":{"key":"670d36f2-ef90-4ea5-bac5-0ede91265195","parentKey":"ca4ee090-94fa-4c82-ba7a-d292d3848d7b","name":"","description":"","prepopulate":false,"tagFilterQuery":"","type":"TAGGER","tagType":"DEVICE","assignmentType":"SINGLE","columns":[]},"71013bc8-7e18-43ac-a016-61796e0759a9":{"type":"TAGGER","parentKey":"e8677704-fce4-462b-b525-b1b84496615c","key":"71013bc8-7e18-43ac-a016-61796e0759a9","name":"Switch Facts","assignmentType":"SINGLE","prepopulate":true,"tagType":"DEVICE","description":"","columns":[{"tagLabel":"router_bgp.as","suggestedValues":[]},{"tagLabel":"router_bgp.router_id","suggestedValues":[]}]},"d281b302-d701-45c3-ba00-439d29973dcd":{"key":"d281b302-d701-45c3-ba00-439d29973dcd","type":"INPUT","showDefaultRow":false},"e5ec88e5-b4b6-4a77-94db-e0c66c314d79":{"key":"e5ec88e5-b4b6-4a77-94db-e0c66c314d79","dependency":{"e5ec88e5-b4b6-4a77-94db-e0c66c314d79":{"value":["__ANY__"],"mode":"HIDE"}},"type":"INPUT"},"ffa079d0-6e67-4a99-8457-c7eb38b393c9":{"key":"ffa079d0-6e67-4a99-8457-c7eb38b393c9","type":"INPUT","dependency":{}},"2eedb0ea-053e-41af-a8b5-c0f0aaf7e276":{"key":"2eedb0ea-053e-41af-a8b5-c0f0aaf7e276","type":"INPUT"},"377ad8b6-557e-409b-a4f0-147a42d26313":{"key":"377ad8b6-557e-409b-a4f0-147a42d26313","type":"INPUT","order":["844a75a1-f2be-4d91-aaae-d1e9fb7dc90c","2eedb0ea-053e-41af-a8b5-c0f0aaf7e276","9a84b142-5f02-42e2-86f0-c92fd2d8e000","60bfa711-9bfb-4345-a734-46c69929b8c7"]},"3f4515db-f86e-43cf-893d-7a1747a579cc":{"key":"3f4515db-f86e-43cf-893d-7a1747a579cc","isPageLayout":true,"dependencyType":"AND","type":"INPUT"},"f72cfbe5-0271-4e92-9068-d31dbc6c8a3d":{"key":"f72cfbe5-0271-4e92-9068-d31dbc6c8a3d","type":"INPUT","dependency":{"f72cfbe5-0271-4e92-9068-d31dbc6c8a3d":{"value":["__ANY__"],"mode":"HIDE"}}},"f8e7bd98-af04-4564-bfb7-a181a82e8676":{"type":"TAGGER","parentKey":"e953c4dd-43c5-429c-b959-36f5a98905fb","key":"f8e7bd98-af04-4564-bfb7-a181a82e8676","name":"VTEP Facts","assignmentType":"SINGLE","prepopulate":true,"tagType":"DEVICE","description":"","columns":[{"tagLabel":"router_bgp.as","suggestedValues":[]},{"tagLabel":"router_bgp.router_id","suggestedValues":[]}]},"da3e099f-ed37-4418-8b4f-b045697f4ead":{"key":"da3e099f-ed37-4418-8b4f-b045697f4ead","type":"INPUT","dependencyType":"AND"},"1b13d80e-9762-4aaf-93ab-4ec6c9c15a0f":{"key":"1b13d80e-9762-4aaf-93ab-4ec6c9c15a0f","type":"INPUT","order":["da3e099f-ed37-4418-8b4f-b045697f4ead","71f7a182-2458-4225-829a-fc9f8ca46b1d","3c1dc55d-16b3-4753-8ce9-bb261e02bced","a6609193-b908-43be-b46d-97666cbe41b1","5fb18b58-4a65-4a19-a6a0-ede45d61abd6","376fb878-9d4b-4d17-b3c0-1c6d5c5d04a9","4386b4ae-956c-4ac6-9b97-986bcac2516e","1b8d1192-8f7b-4237-80d7-f9fe483ec8af","dd9a6277-bb2d-45bf-9e76-2e82314f5592","d2dbcb0b-d493-4135-8de7-bea21fe6d29f"]},"1b8d1192-8f7b-4237-80d7-f9fe483ec8af":{"key":"1b8d1192-8f7b-4237-80d7-f9fe483ec8af","type":"INPUT","valueToLabelMap":{"True":"Vlan Based","False":"Vlan-Aware-Bundle"}},"dd9a6277-bb2d-45bf-9e76-2e82314f5592":{"key":"dd9a6277-bb2d-45bf-9e76-2e82314f5592","dependency":{"1b8d1192-8f7b-4237-80d7-f9fe483ec8af":{"value":[false],"mode":"SHOW"}},"type":"INPUT"},"d2dbcb0b-d493-4135-8de7-bea21fe6d29f":{"key":"d2dbcb0b-d493-4135-8de7-bea21fe6d29f","dependency":{},"type":"INPUT"}}'
