@@ -1,0 +1,525 @@
+- service: arista.studio.v1.StudioConfigService
+  method: Set
+  body:
+    value:
+      key:
+        studio_id: 7f988c45-4cca-45d3-95e9-4c4c8ff47bd7
+        workspace_id: fb97ff30-537f-4429-9c09-9fbd31af213c
+      display_name: Esi
+      description: ''
+      template:
+        type: TEMPLATE_TYPE_MAKO
+        body: |-
+          <% 
+
+          from cloudvision.cvlib.tags import Tag
+
+          #GETTING CURRENT DEVICE INFO ( Module is context, Class is Context, creating device object, use its getDevice function)
+          device= ctx.getDevice()
+
+          device_int_list=list(device.getInterfaces().mapping.keys())
+
+          #GETTING Tag Label and values of current device, values are in list.
+          role_of_switch=device.getTags(ctx,'Role')
+          ID_of_switch=device.getTags(ctx,'ID')
+
+          role_value =[tag.value for tag in role_of_switch]
+          id_value=[id.value for id in ID_of_switch] 
+
+          # this is a list, value will come from form by mako
+          p2PSubnet=[ ]
+          spine_int_subnet= " "
+          peer_int_list= []
+          spine_loopback_list= []
+          interface_index=0
+
+          def spliting(subnet):
+
+              ip_part, subnet_part = subnet.split('/')
+              octets = ip_part.split('.')
+              first_three_octet = ".".join(octets[:3])
+              last_octet = int(octets[3])
+
+              return first_three_octet,last_octet
+
+          def generating_IP(subnet,cidr,id_value,interface_index=None, role=None):
+
+              if isinstance(subnet, list) and role == "leaf":
+                  subnet=subnet[interface_index]
+                  first_three_octet,last_octet=spliting(subnet)
+                  generated_last_octet=(2*int(id_value[0]))-1
+                  ip=first_three_octet+'.'+str(generated_last_octet)+'/'+str(cidr)
+                  return ip
+
+              if isinstance(subnet, list):
+
+                  subnet=subnet[int(id_value[0]) - 1]
+                  first_three_octet,last_octet=spliting(subnet)
+                  generated_last_octet=int(last_octet + interface_index)
+                  ip=first_three_octet+'.'+str(generated_last_octet)+'/'+str(cidr)
+                  return ip
+
+             
+              else:
+                  
+                  first_three_octet,last_octet=spliting(subnet)
+                  generated_last_octet=int(id_value[0])-1
+                  ip=first_three_octet+'.'+str(generated_last_octet)+'/'+str(cidr)
+                  return ip
+
+
+          def get_peer_info(peer_int_obj, ctx, device):
+             
+              if peer_int_obj.getPeerDevice() and peer_int_obj.getPeerDevice().hostName:
+                  peer_device = peer_int_obj.getPeerDevice()
+                  role_of_peer = peer_device.getTags(ctx, 'Role')
+                  ID_of_peer = peer_device.getTags(ctx, 'ID')
+                  peer_role_value = [tag.value for tag in role_of_peer]
+                  peer_id_value = [tag.value for tag in ID_of_peer]
+                  description = device.hostName + '-' + peer_int_obj.getPeerDevice().hostName
+              else:
+                  peer_role_value = [False]
+                  description = False
+                  peer_id_value =False
+
+              return peer_role_value, description, peer_id_value
+
+
+          %>
+            
+          % if dc:
+             
+              
+              <% spine_loopback0=dc.resolve()["dcgroup"]["spineandleafDetails"]["spineLoopback0"] %>
+              <% spine_as=dc.resolve()["dcgroup"]["spineandleafDetails"]["spineAsNumber"] %>
+              <% leaf_loopback0=dc.resolve()["dcgroup"]["spineandleafDetails"]["leafLoopback0"] %>
+              <% leaf_as=dc.resolve()["dcgroup"]["spineandleafDetails"]["leafAsNumber"] %>
+              <% maximum_path=dc.resolve()["dcgroup"]["spineandleafDetails"]["maximumPath"] %>
+              <% ecmp=dc.resolve()["dcgroup"]["spineandleafDetails"]["ecmpValue"] %>
+              <% howManyLeaf=dc.resolve()["dcgroup"]["spineandleafDetails"]["howManyLeaf"] %>
+              <% howManySpine=dc.resolve()["dcgroup"]["spineandleafDetails"]["howManySpine"] %>
+              <% multihop=dc.resolve()["dcgroup"]["spineandleafDetails"]["ebgpMultihop"] %>
+
+              %for i in dc.resolve()["dcgroup"]["p2PSubnets"]:
+                      
+                     <% p2PSubnet.append(i["p2PSubnet"])  %>
+                      
+
+              % endfor
+
+
+          % endif
+
+
+
+          %if role_value[0] == "spine":
+              <% loopback_ip= generating_IP(spine_loopback0,32,id_value) %>
+
+              <% device._assignTag(ctx, Tag("router_bgp.as",str(spine_as))) %>
+              <% device._assignTag(ctx, Tag("router_bgp.router_id",str(loopback_ip.split('/')[0]))) %>
+
+              % for i in device_int_list:
+              <%
+              peer_int_obj=device.getInterfaces().mapping.values().mapping[i]
+              peer_role_value, description,peer_id_value = get_peer_info(peer_int_obj, ctx, device)
+              %>              
+              % if peer_role_value[0] == "leaf":
+                             
+              <% 
+              interface_ip =generating_IP(p2PSubnet,31,id_value,interface_index)
+              interface_index +=2 
+              %>
+                   
+              interface ${i}
+              mtu ${dc.resolve()["dcgroup"]["spineandleafDetails"]["mtu"]}
+              description ${description}
+              no switchport 
+              ip address ${interface_ip}
+              !
+
+              % endif
+
+              %endfor
+
+              
+              interface loopback0
+              ip address ${loopback_ip}
+              !
+
+              peer-filter LEAF-AS
+              match as-range ${leaf_as}-${int(leaf_as)+int(howManyLeaf)-1 } result accept
+
+              !
+              ip routing
+              !
+              router bgp ${spine_as}
+              router-id ${loopback_ip.split('/')[0]}
+              distance bgp 20 200 200
+              maximum-paths ${maximum_path} ecmp ${ecmp}
+              no bgp default ipv4-unicast
+              bgp listen range ${p2PSubnet[int(id_value[0]) - 1]} peer-group UNDERLAY peer-filter LEAF-AS
+              bgp listen range ${leaf_loopback0} peer-group OVERLAY peer-filter LEAF-AS
+              neighbor UNDERLAY peer group 
+              neighbor OVERLAY peer group
+              neighbor OVERLAY update-source loopback  0
+              neighbor OVERLAY ebgp-multihop ${multihop}
+              neighbor OVERLAY send-community
+              neighbor OVERLAY bfd
+              !
+              address-family ipv4 
+              neighbor UNDERLAY activate
+              redistribute connected 
+              !
+              address-family evpn
+              neighbor OVERLAY activate 
+              !
+              interface vxlan 1
+              vxlan source-interface loopback 0
+
+
+          %endif
+
+
+
+
+          %if role_value[0] == "leaf":
+               
+               <% loopback_ip= generating_IP(leaf_loopback0,32,id_value) %>
+
+              <% device._assignTag(ctx, Tag("router_bgp.as",str(int(leaf_as)+int(id_value[0])-1))) %>
+              <% device._assignTag(ctx, Tag("router_bgp.router_id",str(loopback_ip.split('/')[0]))) %>
+
+              % for i in device_int_list:
+              <%
+              peer_int_obj=device.getInterfaces().mapping.values().mapping[i]
+              peer_role_value, description,peer_id_value = get_peer_info(peer_int_obj, ctx, device)
+              %> 
+
+              % if peer_role_value[0] == "spine":
+                             
+              <% 
+              interface_ip =generating_IP(p2PSubnet,31,id_value,interface_index,role="leaf")
+              first_three_octet,last_octet =spliting(interface_ip)
+              peer_int_ip = f"{first_three_octet}.{last_octet - 1}"
+              peer_int_list.append(peer_int_ip)
+
+              spine_loopback_ip= generating_IP(spine_loopback0,32,peer_id_value) 
+              spine_loopback_list.append(spine_loopback_ip.split('/')[0])
+
+
+              interface_index +=1
+              %>
+
+              interface ${i}
+              mtu ${dc.resolve()["dcgroup"]["spineandleafDetails"]["mtu"]}
+              description ${description}
+              no switchport 
+              ip address ${interface_ip}
+              !
+
+              % endif
+
+              %endfor
+
+             
+              interface loopback0
+              ip address ${loopback_ip}
+              !
+
+              ip routing
+              !
+              router bgp ${int(leaf_as)+int(id_value[0])-1}
+              router-id ${loopback_ip.split('/')[0]}
+              distance bgp 20 200 200
+              maximum-paths ${maximum_path} ecmp ${ecmp}
+              no bgp default ipv4-unicast
+              
+              neighbor UNDERLAY peer group
+              neighbor UNDERLAY remote-as ${spine_as}
+               
+              %for i in peer_int_list:
+              neighbor  ${i} peer group  UNDERLAY
+              %endfor
+
+              neighbor OVERLAY peer group
+              neighbor OVERLAY remote-as ${spine_as}
+
+              %for i in spine_loopback_list:
+              neighbor  ${i} peer group  OVERLAY
+              %endfor
+
+              neighbor OVERLAY update-source loopback  0
+              neighbor OVERLAY ebgp-multihop ${multihop}
+              neighbor OVERLAY send-community
+              neighbor OVERLAY bfd
+              !
+              address-family ipv4 
+              neighbor UNDERLAY activate
+              redistribute connected 
+              !
+              address-family evpn
+              neighbor OVERLAY activate 
+              !
+              interface vxlan 1
+              vxlan source-interface loopback 0
+
+
+          %endif
+
+
+
+             
+
+
+
+
+
+           
+           
+      input_schema:
+        fields:
+          values:
+            a9d6cc41-586b-43e8-bb70-0a4eebd277fc:
+              id: a9d6cc41-586b-43e8-bb70-0a4eebd277fc
+              name: spineAsNumber
+              label: Spine As Number
+              description: Enter Spine As numbers
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: '65101'
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            64d33bd9-73a2-4763-beb1-35abfe1fdaf9:
+              id: 64d33bd9-73a2-4763-beb1-35abfe1fdaf9
+              name: spineLoopback0
+              label: Spine Loopback0
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_STRING
+              string_props:
+                default_value: 172.22.16.0/24
+                is_secret: false
+                static_options: null
+                format: cidrv4
+                length: null
+                pattern: null
+                dynamic_options: null
+                extra_values_allowed: false
+            c4aabbba-968e-4b03-a30b-57dd561401a8:
+              id: c4aabbba-968e-4b03-a30b-57dd561401a8
+              name: leafAsNumber
+              label: Leaf As Number
+              description: Enter Starting of Range
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: '65201'
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            8c7ac532-ad13-4e85-a77c-e9f845069ccd:
+              id: 8c7ac532-ad13-4e85-a77c-e9f845069ccd
+              name: leafLoopback0
+              label: Leaf Loopback0
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_STRING
+              string_props:
+                default_value: 172.22.17.0/24
+                is_secret: false
+                static_options: null
+                format: cidrv4
+                length: null
+                pattern: null
+                dynamic_options: null
+                extra_values_allowed: false
+            94957891-e10c-4f78-85e6-5d34ddac0f72:
+              id: 94957891-e10c-4f78-85e6-5d34ddac0f72
+              name: mtu
+              label: MTU
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: '9200'
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            94c2a8a4-0676-4b38-9f82-89dbc6f959ad:
+              id: 94c2a8a4-0676-4b38-9f82-89dbc6f959ad
+              name: howManyLeaf
+              label: How Many Leaf
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: '4'
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            f3e6bc78-3418-49d2-b47d-dec5c731d0cd:
+              id: f3e6bc78-3418-49d2-b47d-dec5c731d0cd
+              name: maximumPath
+              label: Maximum Path
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: '4'
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            ccffab44-0f0f-40fa-bd50-8d28a0e66b59:
+              id: ccffab44-0f0f-40fa-bd50-8d28a0e66b59
+              name: ecmpValue
+              label: Ecmp Value
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: '4'
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            1b68890e-1aa9-4596-9f43-a9180d05b9df:
+              id: 1b68890e-1aa9-4596-9f43-a9180d05b9df
+              name: ebgpMultihop
+              label: Ebgp multihop
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: '3'
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            1829ba2f-5e34-4cf5-829a-d3d9633034bf:
+              id: 1829ba2f-5e34-4cf5-829a-d3d9633034bf
+              name: howManySpine
+              label: How Many Spine
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_INTEGER
+              integer_props:
+                default_value: '2'
+                range: null
+                static_options: null
+                dynamic_options: null
+                extra_values_allowed: false
+            9d431635-469e-46dd-80bc-91b9cf58f0ec:
+              id: 9d431635-469e-46dd-80bc-91b9cf58f0ec
+              name: spineandleafDetails
+              label: Spine and Leaf Details
+              description: ''
+              required: true
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - a9d6cc41-586b-43e8-bb70-0a4eebd277fc
+                    - 64d33bd9-73a2-4763-beb1-35abfe1fdaf9
+                    - c4aabbba-968e-4b03-a30b-57dd561401a8
+                    - 8c7ac532-ad13-4e85-a77c-e9f845069ccd
+                    - 94957891-e10c-4f78-85e6-5d34ddac0f72
+                    - 94c2a8a4-0676-4b38-9f82-89dbc6f959ad
+                    - f3e6bc78-3418-49d2-b47d-dec5c731d0cd
+                    - ccffab44-0f0f-40fa-bd50-8d28a0e66b59
+                    - 1b68890e-1aa9-4596-9f43-a9180d05b9df
+                    - 1829ba2f-5e34-4cf5-829a-d3d9633034bf
+            64e97bdf-e6b2-4c58-98ec-b78ae6090f23:
+              id: 64e97bdf-e6b2-4c58-98ec-b78ae6090f23
+              name: p2PSubnet
+              label: P2PSubnet
+              description: ''
+              required: true
+              type: INPUT_FIELD_TYPE_STRING
+              string_props:
+                default_value: null
+                is_secret: false
+                static_options: null
+                format: cidrv4
+                length: null
+                pattern: null
+                dynamic_options: null
+                extra_values_allowed: false
+            23a1e7c8-e4bc-4b7c-8e01-7cc5124ed396:
+              id: 23a1e7c8-e4bc-4b7c-8e01-7cc5124ed396
+              name: spinepersubnet
+              label: Add Spine per Subnet
+              description: choose spines to create its interface subnets
+              required: false
+              type: INPUT_FIELD_TYPE_TAG_MATCHER
+              tag_matcher_props:
+                tag_matcher_mode: TAG_MATCHER_FIELD_MODE_MULTI_DEVICE_TAG
+                tag_matcher_label: null
+                tag_filter_query: null
+                resolver_filtering_allowed: false
+            3fd4009b-78d8-45a0-84fa-a3b27b2e8550:
+              id: 3fd4009b-78d8-45a0-84fa-a3b27b2e8550
+              name: value
+              label: P2PSubnets Group
+              description: Group of members for P2PSubnets
+              required: false
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - 64e97bdf-e6b2-4c58-98ec-b78ae6090f23
+                    - 23a1e7c8-e4bc-4b7c-8e01-7cc5124ed396
+            fb1fd8e4-61b4-46cd-bff3-c5507e3758bd:
+              id: fb1fd8e4-61b4-46cd-bff3-c5507e3758bd
+              name: p2PSubnets
+              label: P2PSubnets
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_COLLECTION
+              collection_props:
+                base_field_id: 3fd4009b-78d8-45a0-84fa-a3b27b2e8550
+                key: null
+            3a6100aa-0c60-4a53-acba-5e00a6f8c382:
+              id: 3a6100aa-0c60-4a53-acba-5e00a6f8c382
+              name: dcgroup
+              label: DCgroup
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - 9d431635-469e-46dd-80bc-91b9cf58f0ec
+                    - fb1fd8e4-61b4-46cd-bff3-c5507e3758bd
+            3c7ec8af-b7db-481c-948c-3b2b5c7dbb70:
+              id: 3c7ec8af-b7db-481c-948c-3b2b5c7dbb70
+              name: dc
+              label: DC
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_RESOLVER
+              resolver_props:
+                base_field_id: 3a6100aa-0c60-4a53-acba-5e00a6f8c382
+                display_mode: RESOLVER_FIELD_DISPLAY_MODE_SPARSE
+                input_mode: RESOLVER_FIELD_INPUT_MODE_SINGLE_DEVICE_TAG
+                input_tag_label: DC
+                tag_filter_query: null
+            root:
+              id: root
+              name: ''
+              label: ''
+              description: ''
+              required: false
+              type: INPUT_FIELD_TYPE_GROUP
+              group_props:
+                members:
+                  values:
+                    - 3c7ec8af-b7db-481c-948c-3b2b5c7dbb70
+        layout:
+          value: '{"aa2ef349-9509-4544-af2b-3178f168b2d5":{"key":"aa2ef349-9509-4544-af2b-3178f168b2d5","variableName":"value","displayName":"DC Group","description":"Group of members for DC","required":false,"type":"INPUT_FIELD_TYPE_GROUP","members":{"d63fe21e-0021-427e-8428-34e7115e22f8":{"key":"d63fe21e-0021-427e-8428-34e7115e22f8","parentKey":"","name":"","description":"","prepopulate":false,"tagFilterQuery":"","type":"TAGGER","tagType":"DEVICE","assignmentType":"SINGLE","columns":[]}},"parentKey":"b9ffceb2-128a-487b-95c5-54c81e7331ba"},"879fc835-9b5d-4281-8d5a-b2f57acc0c0c":{"type":"TAGGER","parentKey":"bb01c975-0e6d-49de-90b3-23eb1dd9489e","key":"879fc835-9b5d-4281-8d5a-b2f57acc0c0c","name":"devices","assignmentType":"MULTIPLE","prepopulate":true,"tagType":"DEVICE","description":"","columns":[{"tagLabel":"role","suggestedValues":["leaf","spine","superspine"]},{"tagLabel":"nodeid","suggestedValues":[]}]},"1f193f49-aab4-4720-9987-5193f8952b7b":{"type":"TAGGER","parentKey":"ADD::","key":"1f193f49-aab4-4720-9987-5193f8952b7b","name":"Role","assignmentType":"MULTIPLE","prepopulate":true,"tagType":"DEVICE","description":"","columns":[{"tagLabel":"Role","suggestedValues":["Leaf","Spine","SuperSpine"]},{"tagLabel":"ID","suggestedValues":[]}]},"1b172df2-f98c-459e-a0a2-fc2c7ec50ffd":{"key":"1b172df2-f98c-459e-a0a2-fc2c7ec50ffd","variableName":"value","displayName":"e047ce78-9686-4608-817e-187c416ee66a Group","description":"Group of members for e047ce78-9686-4608-817e-187c416ee66a","required":false,"type":"INPUT_FIELD_TYPE_GROUP","members":{"150fb45e-9c54-4e47-be9e-9185cf13a1c3":{"key":"150fb45e-9c54-4e47-be9e-9185cf13a1c3","parentKey":"","name":"","description":"","prepopulate":false,"tagFilterQuery":"","type":"TAGGER","tagType":"DEVICE","assignmentType":"SINGLE","columns":[]}},"parentKey":"e047ce78-9686-4608-817e-187c416ee66a"},"5d7a45d7-1bc8-4a6f-90ca-d7d3b391c920":{"type":"TAGGER","parentKey":"3a6100aa-0c60-4a53-acba-5e00a6f8c382","key":"5d7a45d7-1bc8-4a6f-90ca-d7d3b391c920","name":"Devices","assignmentType":"MULTIPLE","prepopulate":true,"tagType":"DEVICE","description":"","columns":[{"tagLabel":"Role","suggestedValues":["leaf","spine","superspine"]},{"tagLabel":"ID","suggestedValues":[]}]},"c91f955c-86ed-4a5a-bca8-55fcfba83172":{"key":"c91f955c-86ed-4a5a-bca8-55fcfba83172","type":"INPUT","isMultiLine":true},"977ad221-7ebf-4d4c-a8c4-53883ca98627":{"key":"977ad221-7ebf-4d4c-a8c4-53883ca98627","type":"INPUT","isMultiLine":true},"3a6100aa-0c60-4a53-acba-5e00a6f8c382":{"key":"3a6100aa-0c60-4a53-acba-5e00a6f8c382","type":"INPUT","order":["5d7a45d7-1bc8-4a6f-90ca-d7d3b391c920","9d431635-469e-46dd-80bc-91b9cf58f0ec","fb1fd8e4-61b4-46cd-bff3-c5507e3758bd"]},"8315a925-587c-4aa2-ab8c-1f0efb7e13af":{"key":"8315a925-587c-4aa2-ab8c-1f0efb7e13af","type":"INPUT","dependencyType":"OR","dependency":{}},"3e06be9a-c9a8-4db2-90f4-71e466429241":{"key":"3e06be9a-c9a8-4db2-90f4-71e466429241","type":"INPUT"},"06183bea-eada-4f1c-8678-a5c950a7fedb":{"key":"06183bea-eada-4f1c-8678-a5c950a7fedb","type":"INPUT","dependency":{}},"0cd4906e-15b1-424d-b52b-91df80698d66":{"key":"0cd4906e-15b1-424d-b52b-91df80698d66","type":"INPUT","dependency":{}},"7fecaed8-ffde-40b6-ba0f-abc598dd8cad":{"key":"7fecaed8-ffde-40b6-ba0f-abc598dd8cad","type":"INPUT","isPageLayout":false},"3fd4009b-78d8-45a0-84fa-a3b27b2e8550":{"key":"3fd4009b-78d8-45a0-84fa-a3b27b2e8550","type":"INPUT","order":["23a1e7c8-e4bc-4b7c-8e01-7cc5124ed396","64e97bdf-e6b2-4c58-98ec-b78ae6090f23"]},"9d431635-469e-46dd-80bc-91b9cf58f0ec":{"key":"9d431635-469e-46dd-80bc-91b9cf58f0ec","type":"INPUT","order":["a9d6cc41-586b-43e8-bb70-0a4eebd277fc","64d33bd9-73a2-4763-beb1-35abfe1fdaf9","c4aabbba-968e-4b03-a30b-57dd561401a8","8c7ac532-ad13-4e85-a77c-e9f845069ccd","94957891-e10c-4f78-85e6-5d34ddac0f72","94c2a8a4-0676-4b38-9f82-89dbc6f959ad","1829ba2f-5e34-4cf5-829a-d3d9633034bf","f3e6bc78-3418-49d2-b47d-dec5c731d0cd","ccffab44-0f0f-40fa-bd50-8d28a0e66b59","1b68890e-1aa9-4596-9f43-a9180d05b9df"]}}'
