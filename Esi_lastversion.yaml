@@ -4,7 +4,7 @@
     value:
       key:
         studio_id: 7f988c45-4cca-45d3-95e9-4c4c8ff47bd7
-        workspace_id: fb97ff30-537f-4429-9c09-9fbd31af213c
+        workspace_id: d4604c4a-a0bf-40f0-ae55-e1f9f523c112
       display_name: Esi
       description: ''
       template:
@@ -107,8 +107,6 @@
 
               % endfor
 
-
-          % endif
 
 
 
@@ -266,7 +264,7 @@
 
           %endif
 
-
+          %endif
 
              
 
